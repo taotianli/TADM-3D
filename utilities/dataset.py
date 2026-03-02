@@ -5,7 +5,6 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 
 import os
-import pdb
 import sys
 import torch
 from os.path import join
@@ -108,19 +107,7 @@ class SRDataSet(Dataset):
             return {
         'img_hr': torch.zeros((3,new_height,new_width)).float(), 'img_lr': torch.zeros((3,new_height,new_width)).float(), "item_name": "empty", 'diff_ages':0, 'patient_condition':0, 'age':0, 'split':self.prefix
             }
-        
-        """data = nib.load(os.path.join(self.data_dir, pair, mri)).get_fdata()
-        data_next = nib.load(os.path.join(self.data_dir, pair, mri_next)).get_fdata()
 
-        #Select random slice
-        img_hr = data_next[:, :, :]
-
-        #Select random slice
-        img_lr_up = data[:, :, :]
-        
-        img_hr = np.expand_dims(img_hr, axis=0)
-        img_lr_up = np.expand_dims(img_lr_up, axis=0)"""
-                 
         return {
             'img_hr': os.path.join(self.data_dir, pair, mri_next), 'img_lr': os.path.join(self.data_dir, pair, mri), 'item_name':(patient + "_" + str(mri_days)+"_"+str(mri_days_next)), 'diff_ages':mri_diff_ages_next[0], 'patient_condition':patient_conditions[0], 'age':age[0], 'split':self.prefix
         }

@@ -22,7 +22,6 @@ from utilities.lr_scheduler import LinearWarmupCosineAnnealingLR
 from utilities import utils
 from utilities import const
 
-import pdb
 import wandb
 import numpy as np
 import random

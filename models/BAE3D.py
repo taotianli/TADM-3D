@@ -5,7 +5,6 @@ import torch.nn.functional as F
 from torch import nn
 from tqdm import tqdm
 from unet.basic_unet import BasicUNetEncoder
-import pdb
 import math
 
 def get_timestep_embedding(timesteps, embedding_dim):

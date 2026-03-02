@@ -21,7 +21,6 @@ from utilities.lr_scheduler import LinearWarmupCosineAnnealingLR
 from utilities import utils
 from utilities import const
 
-import pdb
 import wandb
 import numpy as np
 
@@ -127,7 +126,7 @@ if __name__ == '__main__':
                                       
                     with torch.set_grad_enabled(mode == 'train'):
                         pred_diff_age = bae(lr, hr, age, patient_condition)
-                        loss = F.mse_loss( pred_diff_age.float(), diff_ages.float() )
+                        loss = F.mse_loss( pred_diff_age.float(), diff_ages.unsqueeze(1).float() )
 
                 if mode == 'train':
                     scaler.scale(loss).backward()
@@ -139,14 +138,15 @@ if __name__ == '__main__':
                 progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
                 global_counter[mode] += 1
 
-            scheduler.step() 
             # end of epoch
             epoch_loss = epoch_loss / len(loader)
             writer.add_scalar(f'{mode}/epoch-mse', epoch_loss, epoch)            
             if args.wandb:
                 wandb.log({f'{mode}/epoch-mse': epoch_loss,
                 }, step=epoch)
-            
+
+        scheduler.step()
+
         if epoch_loss < min_valid_loss:
             min_valid_loss = epoch_loss
             # save the model                
