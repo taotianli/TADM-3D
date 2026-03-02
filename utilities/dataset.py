@@ -19,7 +19,8 @@ class SRDataSet(Dataset):
         self.len = len(self.X)
         
         #if self.task == 'srdiff':
-        with open('configs/OASIS3_participant_data.txt') as f:
+        _dir = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(_dir, 'OASIS3_participant_data.txt')) as f:
             lines = f.readlines()
             lines = [l.split("\t") for l in lines]
             
@@ -39,7 +40,7 @@ class SRDataSet(Dataset):
 
         #BUILDING DICT CONTAINING CONDITIONS DATA
         self.patients_conditions = {}
-        with open('configs/OASIS3_patients_condition.txt') as f:
+        with open(os.path.join(_dir, 'OASIS3_patients_condition.txt')) as f:
             lines = f.readlines()
             lines = [l.split("\t") for l in lines]
             lines = [l[:4] for l in lines]
@@ -90,7 +91,7 @@ class SRDataSet(Dataset):
       
         #COMPUTE DIFFERENT IN AGES
         #mri_diff_ages = ((1/365.0) * mri_days) #+ age_first_visit #YEAR BASED
-        mri_diff_ages_next = ((1/30.0) * (mri_days_next - mri_days)) #+ age_first_visit #MONTH BASED
+        mri_diff_ages_next = ((1/365.0) * (mri_days_next - mri_days)) #+ age_first_visit #YEAR BASED
         age = ((1/365.0) * mri_days) + age_first_visit
         
         

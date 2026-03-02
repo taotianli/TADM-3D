@@ -129,8 +129,8 @@ class AdaptiveTimeSampler:
 
         if diff_ages is not None:
             # Soft bias: longer intervals → sample t closer to 1
-            # diff_ages normalised to [0,1] by dividing by 120 months (10 yrs)
-            bias = (diff_ages.float().to(device) / 120.0).clamp(0, 1)
+            # diff_ages normalised to [0,1] by dividing by 10 years
+            bias = (diff_ages.float().to(device) / 10.0).clamp(0, 1)
             t = t * (1.0 - 0.3 * bias) + 0.3 * bias * torch.rand_like(t)
             t = t.clamp(1e-4, 1.0 - 1e-4)
 
@@ -255,8 +255,8 @@ class ConditionalFlowMatching(nn.Module):
         # Sample source: Gaussian noise, optionally scaled by age-gap
         x0 = torch.randn_like(x1)
         if diff_ages is not None:
-            # Normalise diff_ages (months) to [0.5, 1.5] scale factor
-            scale = 1.0 + 0.5 * (diff_ages.float().to(device) / 120.0).clamp(0, 1)
+            # Normalise diff_ages (years) to [0.5, 1.5] scale factor
+            scale = 1.0 + 0.5 * (diff_ages.float().to(device) / 10.0).clamp(0, 1)
             scale = scale.view(-1, *([1] * (x1.ndim - 1)))
             x0 = x0 * scale
 
@@ -280,7 +280,7 @@ class ConditionalFlowMatching(nn.Module):
         """Generate a sample by integrating the learned velocity field."""
         x0 = torch.randn(shape, device=device)
         if diff_ages is not None:
-            scale = 1.0 + 0.5 * (diff_ages.float().to(device) / 120.0).clamp(0, 1)
+            scale = 1.0 + 0.5 * (diff_ages.float().to(device) / 10.0).clamp(0, 1)
             scale = scale.view(-1, *([1] * (len(shape) - 1)))
             x0 = x0 * scale
         return self.solver.solve(velocity_fn, x0)
