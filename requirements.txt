@@ -1,0 +1,27 @@
+# Core deep learning
+# Note: torch and torchvision should be installed via the official CUDA wheel
+# for your target CUDA version. On DGX with CUDA 12.x:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch>=2.1.0
+torchvision>=0.16.0
+
+# Medical imaging
+monai==1.5.2
+monai-generative==0.2.3
+nibabel==5.3.2
+simpleitk==2.5.2
+
+# Data / numerics
+numpy==2.3.4
+pandas==2.3.3
+scipy==1.15.3
+scikit-image==0.25.2
+
+# Model components
+einops==0.8.1
+timm==1.0.22
+
+# Training utilities
+tqdm==4.67.1
+tensorboard==2.20.0
+wandb==0.22.2
