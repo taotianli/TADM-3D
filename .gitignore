@@ -1,0 +1,27 @@
+# Logs
+*.log
+
+# Checkpoints
+checkpoints/
+
+# TensorBoard runs
+runs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Data
+*.nii
+*.nii.gz
+*.npy
+
+# Misc
+.DS_Store
+*.swp

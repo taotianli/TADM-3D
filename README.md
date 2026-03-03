@@ -88,42 +88,94 @@ The repository includes training, inference, and evaluation scripts for full rep
 
 ### Training
 
-**Train Brain Age Estimator:**
+**Train Brain Age Estimator (BAE):**
 ```bash
 python tasks/train_bae_model.py \
     --dataset /path/to/dataset/ \
     --cache_dir /path/to/cache/ \
-    --output_dir /path/to/output/ \
-    --run_name experiment_name
+    --output_dir ./checkpoints \
+    --run_name bae_run1 \
+    --n_epochs 100 \
+    --batch_size 2 \
+    --lr 1e-4 \
+    --num_workers 0
 ```
 
-**Train Diffusion Model:**
+**Train 3D Diffusion Model (TADM-3D):**
 ```bash
-python tasks/train_diff_model.py \
+# Train with BAE integration (recommended)
+nohup python tasks/train_diff_model.py \
     --dataset /path/to/dataset/ \
     --cache_dir /path/to/cache/ \
-    --output_dir /path/to/output/ \
-    --run_name experiment_name
+    --output_dir ./checkpoints \
+    --run_name tadm_diff_run1 \
+    --n_epochs 500 \
+    --batch_size 1 \
+    --lr 1e-4 \
+    --num_workers 0 \
+    --bae_ckpt ./checkpoints/bae-best.pth \
+    > train_diff.log 2>&1 &
 ```
 
-**Train with BAE integration:**
+**Train 3D Flow Matching Model (TAFM-3D):**
 ```bash
-python tasks/train_diff_model.py \
+# Train with BAE integration (recommended)
+nohup python tasks/train_fm_model.py \
     --dataset /path/to/dataset/ \
     --cache_dir /path/to/cache/ \
-    --output_dir /path/to/output/ \
-    --run_name experiment_name \
-    --bae_ckpt /path/to/bae_checkpoint.pth
+    --output_dir ./checkpoints \
+    --run_name tadm_fm_run1 \
+    --n_epochs 500 \
+    --batch_size 1 \
+    --lr 1e-4 \
+    --num_workers 0 \
+    --lambda_cons 0.1 \
+    --interpolant stochastic \
+    --solver heun \
+    --n_steps 20 \
+    --bae_ckpt ./checkpoints/bae-best.pth \
+    > train_fm.log 2>&1 &
 ```
+
+> **Note:** `--num_workers 0` is recommended to avoid CUDA driver crashes with certain GPU/driver combinations.
 
 ### Inference
 
+**Diffusion Model Inference:**
 ```bash
 python tasks/test_diff_model.py \
     --dataset /path/to/dataset/ \
     --cache_dir /path/to/cache/ \
-    --output_dir /path/to/predictions/ \
-    --diff_ckpt /path/to/model_checkpoint.pth
+    --output_dir ./predictions/ \
+    --diff_ckpt ./checkpoints/tadm-best.pth \
+    --run_name test_run1 \
+    --num_workers 0 \
+    --batch_size 1
+```
+
+**Flow Matching Model Inference:**
+```bash
+python tasks/test_fm_model.py \
+    --dataset /path/to/dataset/ \
+    --cache_dir /path/to/cache/ \
+    --output_dir ./predictions/ \
+    --fm_ckpt ./checkpoints/tafm-best.pth \
+    --run_name test_run1 \
+    --num_workers 0 \
+    --batch_size 1 \
+    --n_steps 20 \
+    --solver heun
+```
+
+### Monitoring Training
+
+```bash
+# Real-time log monitoring
+tail -f train_diff.log
+tail -f train_fm.log
+
+# View with TensorBoard
+tensorboard --logdir ./runs
 ```
 
 ---

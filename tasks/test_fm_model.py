@@ -82,7 +82,7 @@ if __name__ == '__main__':
     testset  = monai.data.Dataset(test_df, transforms_fn)
     test_loader = DataLoader(testset, num_workers=args.num_workers,
                              batch_size=args.batch_size, shuffle=False,
-                             persistent_workers=True, pin_memory=True)
+                             persistent_workers=False, pin_memory=True)
 
     model = FlowMatching3D(n_inference_steps=args.n_steps, solver=args.solver).to(DEVICE)
     model.load_state_dict(torch.load(args.fm_ckpt, map_location=DEVICE))
@@ -93,7 +93,7 @@ if __name__ == '__main__':
     for i, batch in enumerate(tqdm(test_loader, desc="Testing")):
         item_name = batch['item_name'][0]
         age       = batch['age']
-        diff_ages = batch['diff_ages']
+        diff_ages = batch['diff_ages'] / 12.0  # convert months to years
 
         out_dir = os.path.join(args.output_dir,
                                f'{item_name}_{int(age[0])}_{int(diff_ages[0])}')

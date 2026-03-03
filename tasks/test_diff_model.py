@@ -98,7 +98,7 @@ if __name__ == '__main__':
             
         item_name = batch['item_name'][0]
         age = batch['age']
-        diff_ages = batch['diff_ages']
+        diff_ages = batch['diff_ages'] / 12.0  # convert months to years
         custom_diffes.append(diff_ages)
 
         if os.path.exists(os.path.join(args.output_dir, f'{item_name}_{int(age[0])}_{int(diff_ages[0])}')):

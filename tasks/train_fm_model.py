@@ -132,10 +132,10 @@ if __name__ == '__main__':
 
     train_loader = DataLoader(trainset, num_workers=args.num_workers,
                               batch_size=args.batch_size, shuffle=True,
-                              persistent_workers=True, pin_memory=True)
+                              persistent_workers=False, pin_memory=True)
     valid_loader = DataLoader(validset, num_workers=args.num_workers,
                               batch_size=args.batch_size, shuffle=True,
-                              persistent_workers=True, pin_memory=True)
+                              persistent_workers=False, pin_memory=True)
 
     model = FlowMatching3D(
         interpolant_type=args.interpolant,
@@ -180,7 +180,7 @@ if __name__ == '__main__':
             progress_bar.set_description(f"Epoch {epoch} [{mode}]")
 
             for step, batch in progress_bar:
-                with autocast(enabled=True):
+                with autocast(enabled=False):
                     if mode == 'train':
                         optimizer.zero_grad(set_to_none=True)
 
@@ -189,20 +189,22 @@ if __name__ == '__main__':
 
                     if not reverse:
                         inputs    = (batch['img_hr'] - batch['img_lr']).to(DEVICE)
+                        diff_ages_yr = (batch['diff_ages'] / 12.0)
                         metadata  = torch.stack(
-                            (batch['age'], batch['diff_ages'], batch['patient_condition']), dim=1
+                            (batch['age'], diff_ages_yr, batch['patient_condition']), dim=1
                         ).float().to(DEVICE)
                         context   = batch['img_lr'].to(DEVICE)
-                        diff_ages = batch['diff_ages'].to(DEVICE)
+                        diff_ages = diff_ages_yr.to(DEVICE)
                     else:
                         inputs    = (batch['img_lr'] - batch['img_hr']).to(DEVICE)
+                        diff_ages_yr = (batch['diff_ages'] / 12.0)
                         metadata  = torch.stack(
-                            (batch['age'] + batch['diff_ages'],
-                             -batch['diff_ages'],
+                            (batch['age'] + diff_ages_yr,
+                             -diff_ages_yr,
                              batch['patient_condition']), dim=1
                         ).float().to(DEVICE)
                         context   = batch['img_hr'].to(DEVICE)
-                        diff_ages = batch['diff_ages'].to(DEVICE)
+                        diff_ages = diff_ages_yr.to(DEVICE)
 
                     with torch.set_grad_enabled(mode == 'train'):
                         # --- CFM training loss ---
@@ -235,7 +237,7 @@ if __name__ == '__main__':
                                     pred_lr, context,
                                     batch['age'].to(DEVICE),
                                     batch['patient_condition'].to(DEVICE))
-                            gt_diff_age = batch['diff_ages'].to(DEVICE).unsqueeze(1).float()
+                            gt_diff_age = (batch['diff_ages'] / 12.0).to(DEVICE).unsqueeze(1).float()
                             bae_loss = F.mse_loss(predicted_diff_age.float(), gt_diff_age)
                             loss = loss + bae_loss
 
