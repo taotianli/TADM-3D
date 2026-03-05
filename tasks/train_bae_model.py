@@ -21,7 +21,7 @@ import monai
 import torch.nn.functional as F
 import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from monai import transforms
 from monai.utils import set_determinism
@@ -110,7 +110,7 @@ if __name__ == '__main__':
                                                 warmup_epochs=50,
                                                 max_epochs=500)
     
-    scaler = GradScaler()
+    scaler = GradScaler('cuda')
     
     writer = SummaryWriter()
     global_counter  = { 'train': 0, 'valid': 0 }
@@ -132,7 +132,7 @@ if __name__ == '__main__':
             
             for step, batch in progress_bar:
                             
-                with autocast(enabled=True):       
+                with autocast('cuda', enabled=True):       
                     if mode == 'train': optimizer.zero_grad(set_to_none=True)
                     
                     hr = (batch['img_hr']).to(DEVICE)
