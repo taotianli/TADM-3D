@@ -1,9 +1,6 @@
-# Core deep learning
-# Note: torch and torchvision should be installed via the official CUDA wheel
-# for your target CUDA version. On DGX with CUDA 12.x:
-# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-torch>=2.1.0
-torchvision>=0.16.0
+# torch and torchvision are pre-installed in the NVIDIA container
+# torch>=2.1.0
+# torchvision>=0.16.0
 
 # Medical imaging
 monai==1.5.2
@@ -12,10 +9,11 @@ nibabel==5.3.2
 simpleitk==2.5.2
 
 # Data / numerics
-numpy==2.3.4
-pandas==2.3.3
-scipy==1.15.3
-scikit-image==0.25.2
+# numpy<2 required for compatibility with container's pyarrow and cv2
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.13.1
+scikit-image==0.24.0
 
 # Model components
 einops==0.8.1

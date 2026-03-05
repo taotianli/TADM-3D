@@ -73,14 +73,14 @@ if __name__ == '__main__':
                               num_workers=args.num_workers, 
                               batch_size=args.batch_size, 
                               shuffle=True, 
-                              persistent_workers=True,
+                              persistent_workers=args.num_workers > 0,
                               pin_memory=True)
     
     valid_loader = DataLoader(dataset=validset, 
                               num_workers=args.num_workers, 
                               batch_size=args.batch_size, 
                               shuffle=False, 
-                              persistent_workers=True, 
+                              persistent_workers=args.num_workers > 0, 
                               pin_memory=True)
     
     bae = BAE3D().to(DEVICE)
