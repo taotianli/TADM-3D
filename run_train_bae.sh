@@ -2,9 +2,8 @@
 
 cd /nfs/home/ttao/Projects/TADM-3D
 
-# 清除之前安装在 NFS 上的旧包
-rm -rf /home/runai-home/.local/lib/python3.10/site-packages/torch*
-rm -rf /home/runai-home/.local/lib/python3.10/site-packages/torchvision*
+# 彻底清除 NFS 上所有之前安装的本地包，使用容器预装环境
+rm -rf /home/runai-home/.local/lib/
 # 只安装其他依赖，torch 使用容器预装版本
 pip install -r requirements.txt -q
 
