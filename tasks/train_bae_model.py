@@ -76,8 +76,17 @@ if __name__ == '__main__':
         transforms.ScaleIntensityD(minv=0, maxv=1, keys=['img_hr', 'img_lr']),
     ])
 
-    train_df = pd.read_csv(args.dataset + "train_dataset.csv").to_dict(orient='records')
-    valid_df = pd.read_csv(args.dataset + "valid_dataset.csv").to_dict(orient='records')
+    def load_df(csv_path, dataset_root):
+        df = pd.read_csv(csv_path)
+        for col in ('img_hr', 'img_lr'):
+            if col in df.columns:
+                df[col] = df[col].apply(
+                    lambda p: p if os.path.isabs(p) else os.path.join(dataset_root, p)
+                )
+        return df.to_dict(orient='records')
+
+    train_df = load_df(args.dataset + "train_dataset.csv", args.dataset)
+    valid_df = load_df(args.dataset + "valid_dataset.csv", args.dataset)
     trainset = monai.data.Dataset(train_df,transforms_fn)
     validset = monai.data.Dataset(valid_df,transforms_fn)
 
