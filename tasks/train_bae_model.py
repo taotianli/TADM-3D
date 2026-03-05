@@ -96,14 +96,14 @@ if __name__ == '__main__':
                               batch_size=args.batch_size, 
                               shuffle=True, 
                               persistent_workers=args.num_workers > 0,
-                              pin_memory=True)
+                              pin_memory=False)
     
     valid_loader = DataLoader(dataset=validset, 
                               num_workers=args.num_workers, 
                               batch_size=args.batch_size, 
                               shuffle=False, 
                               persistent_workers=args.num_workers > 0, 
-                              pin_memory=True)
+                              pin_memory=False)
     
     bae = BAE3D().to(DEVICE)
     optimizer = torch.optim.AdamW(bae.parameters(), lr=args.lr, weight_decay=1e-3)
