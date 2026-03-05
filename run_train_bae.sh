@@ -21,7 +21,7 @@ python tasks/train_bae_model.py \
     --cache_dir /nfs/home/ttao/cache/ \
     --output_dir /nfs/home/ttao/Projects/TADM-3D/checkpoints \
     --run_name bae_run1 \
-    --n_epochs 1 \
-    --batch_size 4 \
+    --n_epochs 100 \
+    --batch_size 6 \
     --lr 1e-4 \
     --num_workers 4
