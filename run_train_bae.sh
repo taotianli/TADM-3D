@@ -12,6 +12,8 @@ rm -rf /home/runai-home/.local/lib/
 pip install -r requirements.txt -q
 pip install monai-generative --no-deps -q
 
+nvidia-smi
+
 python -c "import torch; import monai; print('torch:', torch.__version__); print('monai:', monai.__version__)"
 
 python tasks/train_bae_model.py \
@@ -20,6 +22,6 @@ python tasks/train_bae_model.py \
     --output_dir /nfs/home/ttao/Projects/TADM-3D/checkpoints \
     --run_name bae_run1 \
     --n_epochs 1 \
-    --batch_size 2 \
+    --batch_size 6 \
     --lr 1e-4 \
     --num_workers 0
