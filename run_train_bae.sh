@@ -2,10 +2,13 @@
 
 cd /nfs/home/ttao/Projects/TADM-3D
 
-# 彻底清除 NFS 上所有之前安装的本地包，使用容器预装环境
+# 清除旧的本地包
 rm -rf /home/runai-home/.local/lib/
-# 只安装其他依赖，torch 使用容器预装版本
+# 安装依赖，monai-generative 用 --no-deps 避免拉取 torch
 pip install -r requirements.txt -q
+pip install monai-generative --no-deps -q
+
+python -c "import torch; import monai; print('torch:', torch.__version__); print('monai:', monai.__version__)"
 
 python tasks/train_bae_model.py \
     --dataset /nfs/home/ttao/Data/paired_oasis/pairwise_oasis/ \
