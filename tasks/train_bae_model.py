@@ -2,10 +2,22 @@ import sys
 sys.path.append('.')
 sys.path.append('./models')
 
+import torch
+
+# Workaround for PyTorch 2.10 bug: PrecompileCacheArtifact gets registered twice
+# when torch._dynamo is lazily imported after monai/generative already triggered it.
+import torch.compiler._cache as _tc
+@classmethod  # type: ignore[misc]
+def _safe_register(cls, artifact_cls):
+    if artifact_cls.type() not in cls._artifact_types:
+        cls._artifact_types[artifact_cls.type()] = artifact_cls
+    return artifact_cls
+_tc.CacheArtifactFactory.register = _safe_register
+del _tc, _safe_register
+
 import os
 import argparse
 import monai
-import torch
 import torch.nn.functional as F
 import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
