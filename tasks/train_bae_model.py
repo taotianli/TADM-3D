@@ -35,6 +35,7 @@ from utilities import const
 
 import wandb
 import numpy as np
+import psutil
 
 set_determinism(0)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -156,7 +157,14 @@ if __name__ == '__main__':
                     
                 writer.add_scalar(f'{mode}/batch-mse', loss.item(), global_counter[mode])
                 epoch_loss += loss.item()
-                progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
+                gpu_alloc = torch.cuda.memory_allocated() / 1024**3
+                gpu_reserved = torch.cuda.memory_reserved() / 1024**3
+                ram_gb = (psutil.Process().memory_info().rss) / 1024**3
+                progress_bar.set_postfix({
+                    "loss": f"{epoch_loss / (step + 1):.4f}",
+                    "GPU": f"{gpu_alloc:.1f}/{gpu_reserved:.1f}GB",
+                    "RAM": f"{ram_gb:.1f}GB",
+                })
                 global_counter[mode] += 1
 
             # end of epoch
