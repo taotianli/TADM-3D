@@ -74,14 +74,7 @@ if __name__ == '__main__':
         transforms.EnsureChannelFirstD(keys=['img_lr', 'img_hr']), 
         transforms.SpacingD(pixdim=1.5, keys=[ 'img_lr', 'img_hr']),
         transforms.ResizeWithPadOrCropD(spatial_size=(128, 128, 128), mode='minimum', keys=[ 'img_lr', 'img_hr'], lazy=True),
-        transforms.ScaleIntensityRangePercentilesD(
-            keys=['img_hr', 'img_lr'],
-            lower=0.5,
-            upper=99.5,
-            b_min=0.0,
-            b_max=1.0,
-            clip=True,
-        ),
+        transforms.NormalizeIntensityD(keys=['img_hr', 'img_lr'], nonzero=True, channel_wise=True),
     ])
 
     def load_df(csv_path, dataset_root):
