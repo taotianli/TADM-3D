@@ -2,14 +2,26 @@ import sys
 sys.path.append('.')
 sys.path.append('./models')
 
+import torch
+
+# Workaround for PyTorch 2.10 bug: PrecompileCacheArtifact gets registered twice
+# when torch._dynamo is lazily imported after monai/generative already triggered it.
+import torch.compiler._cache as _tc
+@classmethod  # type: ignore[misc]
+def _safe_register(cls, artifact_cls):
+    if artifact_cls.type() not in cls._artifact_types:
+        cls._artifact_types[artifact_cls.type()] = artifact_cls
+    return artifact_cls
+_tc.CacheArtifactFactory.register = _safe_register
+del _tc, _safe_register
+
 import os
 import argparse
 import monai
-import torch
 import torch.nn.functional as F
 import pandas as pd
 from torch.utils.tensorboard import SummaryWriter
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from monai import transforms
 from monai.utils import set_determinism
@@ -25,6 +37,7 @@ from utilities import const
 import wandb
 import numpy as np
 import random
+import psutil
 
 set_determinism(0)
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -46,13 +59,13 @@ if __name__ == '__main__':
     parser.add_argument('--cache_dir',  required=True, type=str)
     parser.add_argument('--output_dir', required=True, type=str)
     parser.add_argument('--diff_ckpt',   default=None, type=str)
+    parser.add_argument('--bae_ckpt',    default=None, type=str)
     parser.add_argument('--num_workers', default=8,     type=int)
     parser.add_argument('--n_epochs',    default=500,     type=int)
     parser.add_argument('--batch_size',  default=16,    type=int)
     parser.add_argument('--lr',          default=1e-4,  type=float)
     parser.add_argument('--wandb',       action='store_true')
     parser.add_argument('--run_name',    required=True, type=str)
-    parser.add_argument('--bae_ckpt',    default=None, type=str)
     args = parser.parse_args()
     
     if args.wandb:
@@ -64,29 +77,42 @@ if __name__ == '__main__':
         transforms.EnsureChannelFirstD(keys=['img_lr', 'img_hr']), 
         transforms.SpacingD(pixdim=1.5, keys=[ 'img_lr', 'img_hr']),
         transforms.ResizeWithPadOrCropD(spatial_size=(128, 128, 128), mode='minimum', keys=[ 'img_lr', 'img_hr'], lazy=True),
-        transforms.ScaleIntensityD(minv=0, maxv=1, keys=['img_hr', 'img_lr']),
+        transforms.NormalizeIntensityD(keys=['img_hr', 'img_lr'], nonzero=True, channel_wise=True),
     ])
 
-    train_df = pd.read_csv(args.dataset + "train_dataset.csv").to_dict(orient='records')
-    valid_df = pd.read_csv(args.dataset + "valid_dataset.csv").to_dict(orient='records')
-    trainset = monai.data.Dataset(train_df,transforms_fn)
-    validset = monai.data.Dataset(valid_df,transforms_fn)
+    def load_df(csv_path, dataset_root):
+        df = pd.read_csv(csv_path)
+        for col in ('img_hr', 'img_lr'):
+            if col in df.columns:
+                df[col] = df[col].apply(
+                    lambda p: p if os.path.isabs(p) else os.path.join(dataset_root, p)
+                )
+        return df.to_dict(orient='records')
+
+    train_df = load_df(args.dataset + "train_dataset.csv", args.dataset)
+    valid_df = load_df(args.dataset + "valid_dataset.csv", args.dataset)
+    trainset = monai.data.Dataset(train_df, transforms_fn)
+    validset = monai.data.Dataset(valid_df, transforms_fn)
 
     train_loader = DataLoader(dataset=trainset, 
                               num_workers=args.num_workers, 
                               batch_size=args.batch_size, 
                               shuffle=True, 
-                              persistent_workers=True,
-                              pin_memory=True)
+                              persistent_workers=args.num_workers > 0,
+                              pin_memory=False)
     
     valid_loader = DataLoader(dataset=validset, 
                               num_workers=args.num_workers, 
                               batch_size=args.batch_size, 
-                              shuffle=True, 
-                              persistent_workers=True, 
-                              pin_memory=True)
+                              shuffle=False, 
+                              persistent_workers=args.num_workers > 0, 
+                              pin_memory=False)
     
     diffusion = Diffusion3D().to(DEVICE)
+
+    if args.diff_ckpt is not None:
+        diffusion.load_state_dict(torch.load(args.diff_ckpt, map_location=DEVICE))
+        print(f"Resumed diffusion model from {args.diff_ckpt}")
 
     # Load and freeze BAE model if checkpoint is provided
     bae = None
@@ -94,7 +120,6 @@ if __name__ == '__main__':
         bae = BAE3D().to(DEVICE)
         bae.load_state_dict(torch.load(args.bae_ckpt, map_location=DEVICE))
         bae.eval()
-        # Freeze BAE parameters
         for param in bae.parameters():
             param.requires_grad = False
         print(f"Loaded and froze BAE model from {args.bae_ckpt}")
@@ -104,12 +129,11 @@ if __name__ == '__main__':
                                                 warmup_epochs=50,
                                                 max_epochs=500)
     
-    scaler = GradScaler()
+    scaler = GradScaler('cuda')
     
     writer = SummaryWriter()
     global_counter  = { 'train': 0, 'valid': 0 }
     loaders         = { 'train': train_loader, 'valid': valid_loader }
-    datasets        = { 'train': trainset, 'valid': validset }
 
     min_valid_loss = np.inf
 
@@ -128,7 +152,7 @@ if __name__ == '__main__':
             
             for step, batch in progress_bar:
                             
-                with autocast(enabled=True):       
+                with autocast('cuda', enabled=True):       
                     if mode == 'train': optimizer.zero_grad(set_to_none=True)
 
                     reverse = True if (random.randint(0, 1) == 1 and mode == 'train') else False
@@ -139,31 +163,24 @@ if __name__ == '__main__':
                     metadata = torch.stack((batch['age'], diff_ages_yr, batch['patient_condition']), dim=1).float().to(DEVICE) if not reverse else torch.stack((batch['age']+diff_ages_yr, -diff_ages_yr, batch['patient_condition']), dim=1).float().to(DEVICE)
                     context = batch['img_lr'].to(DEVICE) if not reverse else batch['img_hr'].to(DEVICE)
                                         
-                    n = inputs.shape[0]                    
-                                      
                     with torch.set_grad_enabled(mode == 'train'):
-                        #inputs = (inputs * 2) - 1
                         x_t, t, noise = diffusion(x=inputs, pred_type="q_sample")
                         pred_inputs = diffusion(x=x_t, step=t, image=context, metadata=metadata, pred_type="denoise")
 
-                        # Diffusion MSE loss
                         mse_diff_loss = F.mse_loss( pred_inputs.float(), inputs.float() )
                         loss = mse_diff_loss
 
-                        # Add BAE loss if BAE model is available
                         if bae is not None:
                             if not reverse:
-                                # Forward mode: predict img_hr from img_lr
-                                pred_hr = context + pred_inputs  # img_lr + predicted_diff
+                                pred_hr = context + pred_inputs
                                 bae_age = batch['age'].to(DEVICE)
                                 predicted_diff_age = bae(context, pred_hr, bae_age, batch['patient_condition'].to(DEVICE))
                             else:
-                                # Reverse mode: predict img_lr from img_hr
-                                pred_lr = context - pred_inputs  # img_hr - predicted_diff
-                                bae_age = batch['age'].to(DEVICE)  # age at img_lr time
+                                pred_lr = context - pred_inputs
+                                bae_age = batch['age'].to(DEVICE)
                                 predicted_diff_age = bae(pred_lr, context, bae_age, batch['patient_condition'].to(DEVICE))
 
-                            gt_diff_age = (batch['diff_ages'] / 12.0).to(DEVICE).unsqueeze(1).float()  # BAE outputs shape (B, 1)
+                            gt_diff_age = (batch['diff_ages'] / 12.0).to(DEVICE).unsqueeze(1).float()
                             bae_loss = F.mse_loss(predicted_diff_age.float(), gt_diff_age)
                             loss = mse_diff_loss + bae_loss
                         else:
@@ -182,11 +199,18 @@ if __name__ == '__main__':
                 epoch_loss += loss.item()
                 epoch_diff_loss += mse_diff_loss.item()
                 epoch_bae_loss += bae_loss.item() if bae is not None else 0.0
-                progress_bar.set_postfix({"loss": epoch_loss / (step + 1)})
+
+                gpu_alloc = torch.cuda.memory_allocated() / 1024**3
+                gpu_reserved = torch.cuda.memory_reserved() / 1024**3
+                ram_gb = psutil.Process().memory_info().rss / 1024**3
+                progress_bar.set_postfix({
+                    "loss": f"{epoch_loss / (step + 1):.4f}",
+                    "GPU": f"{gpu_alloc:.1f}/{gpu_reserved:.1f}GB",
+                    "RAM": f"{ram_gb:.1f}GB",
+                })
                 global_counter[mode] += 1
 
             scheduler.step()
-            # end of epoch
             epoch_loss = epoch_loss / len(loader)
             epoch_diff_loss = epoch_diff_loss / len(loader)
             epoch_bae_loss = epoch_bae_loss / len(loader)
@@ -197,8 +221,7 @@ if __name__ == '__main__':
                 writer.add_scalar(f'{mode}/epoch-mse-bae', epoch_bae_loss, epoch)
 
             diff_pred_image = images_sampling(image=context[0].unsqueeze(0), metadata=metadata[0].unsqueeze(0), diffusion=diffusion)
-            
-            pred_image = torch.clamp(context[0] + diff_pred_image[0], 0, 1)
+            pred_image = context[0] + diff_pred_image[0]
 
             img_hr = batch['img_hr'][0]
             img_lr = batch['img_lr'][0]
@@ -217,14 +240,10 @@ if __name__ == '__main__':
                     log_dict[f'{mode}/epoch-mse-bae'] = epoch_bae_loss
                 wandb.log(log_dict, step=epoch)
 
-            
-            
         if epoch_loss < min_valid_loss:
             min_valid_loss = epoch_loss
-            # save the model                
             savepath = os.path.join(args.output_dir, f'unet-best.pth')
             torch.save(diffusion.state_dict(), savepath)
         
         savepath = os.path.join(args.output_dir, f'unet-last.pth')
         torch.save(diffusion.state_dict(), savepath)
-        
