@@ -109,7 +109,7 @@ if __name__ == '__main__':
 
     for i, batch in enumerate(tqdm(loader, desc="Sampling")):
         age         = batch['age'].to(DEVICE)
-        diff_ages   = (batch['diff_ages'] / 12.0).to(DEVICE)   # months → years
+        diff_ages   = batch['diff_ages'].to(DEVICE)
         condition   = batch['patient_condition'].to(DEVICE)
         context     = batch['img_lr'].to(DEVICE)
 
@@ -134,7 +134,7 @@ if __name__ == '__main__':
 
         age_val  = float(batch['age'][0])
         diff_val = float(batch['diff_ages'][0])
-        print(f"  [{i}] age={age_val:.1f}y  Δ={diff_val:.1f}mo  "
+        print(f"  [{i}] age={age_val:.1f}y  Δ={diff_val:.2f}y  "
               f"MSE={mse:.4f}  PSNR={psnr:.2f}dB  SSIM={ssim_val:.4f}")
 
     # ── summary ──

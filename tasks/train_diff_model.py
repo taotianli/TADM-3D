@@ -159,7 +159,7 @@ if __name__ == '__main__':
                     
                     inputs = (batch['img_hr']-batch['img_lr']).to(DEVICE) if not reverse else (batch['img_lr']-batch['img_hr']).to(DEVICE)
 
-                    diff_ages_yr = batch['diff_ages'] / 12.0
+                    diff_ages_yr = batch['diff_ages']
                     metadata = torch.stack((batch['age'], diff_ages_yr, batch['patient_condition']), dim=1).float().to(DEVICE) if not reverse else torch.stack((batch['age']+diff_ages_yr, -diff_ages_yr, batch['patient_condition']), dim=1).float().to(DEVICE)
                     context = batch['img_lr'].to(DEVICE) if not reverse else batch['img_hr'].to(DEVICE)
                                         
@@ -180,7 +180,7 @@ if __name__ == '__main__':
                                 bae_age = batch['age'].to(DEVICE)
                                 predicted_diff_age = bae(pred_lr, context, bae_age, batch['patient_condition'].to(DEVICE))
 
-                            gt_diff_age = (batch['diff_ages'] / 12.0).to(DEVICE).unsqueeze(1).float()
+                            gt_diff_age = batch['diff_ages'].to(DEVICE).unsqueeze(1).float()
                             bae_loss = F.mse_loss(predicted_diff_age.float(), gt_diff_age)
                             loss = mse_diff_loss + bae_loss
                         else:
