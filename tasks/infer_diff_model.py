@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader
 from monai import transforms
 from tqdm import tqdm
 from models.Diffusion3D import Diffusion3D
+from skimage.metrics import structural_similarity as ssim
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -35,6 +36,17 @@ def save_nifti(arr: np.ndarray, path: str):
     if hi > lo:
         arr = (arr - lo) / (hi - lo)
     nib.save(nib.Nifti1Image(arr, affine=np.eye(4)), path)
+
+
+def compute_metrics(pred: np.ndarray, gt: np.ndarray):
+    """MSE / PSNR / SSIM on z-score normalised volumes."""
+    pred = pred.squeeze().astype(np.float64)
+    gt   = gt.squeeze().astype(np.float64)
+    mse  = float(np.mean((pred - gt) ** 2))
+    data_range = gt.max() - gt.min()
+    psnr = float(20 * np.log10(data_range / (np.sqrt(mse) + 1e-8))) if mse > 0 else float('inf')
+    ssim_val = float(ssim(pred, gt, data_range=data_range))
+    return mse, psnr, ssim_val
 
 
 def ddim_sample(diffusion, context, metadata):
@@ -93,27 +105,49 @@ if __name__ == '__main__':
     print(f"Loaded diffusion model from {args.diff_ckpt}")
     print(f"Generating {args.n_samples} samples → {args.output_dir}\n")
 
+    all_mse, all_psnr, all_ssim = [], [], []
+
     for i, batch in enumerate(tqdm(loader, desc="Sampling")):
         age         = batch['age'].to(DEVICE)
         diff_ages   = (batch['diff_ages'] / 12.0).to(DEVICE)   # months → years
         condition   = batch['patient_condition'].to(DEVICE)
-        context     = batch['img_lr'].to(DEVICE)                # LR image as condition
+        context     = batch['img_lr'].to(DEVICE)
 
         metadata = torch.stack((age, diff_ages, condition), dim=1).float()
 
         diff_pred = ddim_sample(diffusion, context, metadata)
         pred_hr   = context + diff_pred                         # LR + predicted diff
 
+        # ── metrics (computed in z-score space, before min-max rescaling) ──
+        pred_np = pred_hr.cpu().numpy()
+        gt_np   = batch['img_hr'].cpu().numpy()
+        mse, psnr, ssim_val = compute_metrics(pred_np, gt_np)
+        all_mse.append(mse);  all_psnr.append(psnr);  all_ssim.append(ssim_val)
+
+        # ── save ──
         sample_dir = os.path.join(args.output_dir, f'sample_{i:03d}')
         os.makedirs(sample_dir, exist_ok=True)
-
         save_nifti(batch['img_lr'].cpu().numpy(),  os.path.join(sample_dir, 'lr.nii.gz'))
-        save_nifti(batch['img_hr'].cpu().numpy(),  os.path.join(sample_dir, 'hr_gt.nii.gz'))
-        save_nifti(pred_hr.cpu().numpy(),          os.path.join(sample_dir, 'hr_pred.nii.gz'))
+        save_nifti(gt_np,                          os.path.join(sample_dir, 'hr_gt.nii.gz'))
+        save_nifti(pred_np,                        os.path.join(sample_dir, 'hr_pred.nii.gz'))
         save_nifti(diff_pred.cpu().numpy(),        os.path.join(sample_dir, 'diff_pred.nii.gz'))
 
         age_val  = float(batch['age'][0])
         diff_val = float(batch['diff_ages'][0])
-        print(f"  [{i}] age={age_val:.1f}y  diff={diff_val:.1f}mo  → {sample_dir}")
+        print(f"  [{i}] age={age_val:.1f}y  Δ={diff_val:.1f}mo  "
+              f"MSE={mse:.4f}  PSNR={psnr:.2f}dB  SSIM={ssim_val:.4f}")
 
-    print("\nDone.")
+    # ── summary ──
+    print("\n" + "="*55)
+    print(f"{'Metric':<10}  {'Mean':>10}  {'Std':>10}")
+    print("-"*55)
+    print(f"{'MSE':<10}  {np.mean(all_mse):>10.4f}  {np.std(all_mse):>10.4f}")
+    print(f"{'PSNR(dB)':<10}  {np.mean(all_psnr):>10.2f}  {np.std(all_psnr):>10.2f}")
+    print(f"{'SSIM':<10}  {np.mean(all_ssim):>10.4f}  {np.std(all_ssim):>10.4f}")
+    print("="*55)
+
+    # save CSV summary
+    summary_path = os.path.join(args.output_dir, 'metrics.csv')
+    pd.DataFrame({'mse': all_mse, 'psnr': all_psnr, 'ssim': all_ssim}).to_csv(
+        summary_path, index_label='sample')
+    print(f"\nPer-sample metrics saved to {summary_path}")
