@@ -19,7 +19,7 @@ python tasks/train_fm_model.py \
     --bae_ckpt    /nfs/home/ttao/Projects/TADM-3D/checkpoints/bae-best.pth \
     --run_name    fm_run1 \
     --n_epochs    500 \
-    --batch_size  2 \
+    --batch_size  1 \
     --lr          1e-4 \
     --num_workers 4 \
     --interpolant stochastic \

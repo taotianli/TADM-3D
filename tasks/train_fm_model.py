@@ -68,26 +68,35 @@ def images_sampling(image, metadata, model, diff_ages=None):
 # Innovation 5 — Consistency Regularization Loss
 # ---------------------------------------------------------------------------
 
-def consistency_loss(model, x1, image, metadata, diff_ages, n_pairs=2):
+def consistency_loss(model, x1, image, metadata, diff_ages):
     """
     Consistency Regularization: two independently sampled (x_t, t) pairs
-    from the same x_1 should produce velocity predictions that are
-    consistent with the same underlying flow.
+    from the same x_1 should produce velocity predictions consistent with
+    the same underlying flow.
 
-        x1_hat_a = x_t_a + (1 - t_a) * v_theta(x_t_a, t_a)
-        x1_hat_b = x_t_b + (1 - t_b) * v_theta(x_t_b, t_b)
-        L_cons = MSE(x1_hat_a, x1_hat_b)
+        x1_hat_a = x_t_a + (1 - t_a) * v_theta(x_t_a, t_a)   [with grad]
+        x1_hat_b = x_t_b + (1 - t_b) * v_theta(x_t_b, t_b)   [no grad, target]
+        L_cons = MSE(x1_hat_a, x1_hat_b.detach())
+
+    The second pair runs under torch.no_grad() since it is used only as a
+    detached target, halving the extra memory overhead vs. a naive two-pass.
     """
     embeddings = model.embed_model(image)
-    preds = []
-    for _ in range(n_pairs):
-        x_t, t, _ = model(x=x1, pred_type="get_train_sample", diff_ages=diff_ages)
-        v_pred = model.model(x_t, t=t, image=image,
-                             embeddings=embeddings, metadata=metadata)
-        t_ = t.view(-1, 1, 1, 1, 1)
-        x1_hat = x_t + (1.0 - t_) * v_pred
-        preds.append(x1_hat)
-    return F.mse_loss(preds[0], preds[1].detach())
+
+    # first pass — gradients flow through this one
+    x_t_a, t_a, _ = model(x=x1, pred_type="get_train_sample", diff_ages=diff_ages)
+    v_pred_a = model.model(x_t_a, t=t_a, image=image,
+                           embeddings=embeddings, metadata=metadata)
+    x1_hat_a = x_t_a + (1.0 - t_a.view(-1, 1, 1, 1, 1)) * v_pred_a
+
+    # second pass — detached target, no gradient needed
+    with torch.no_grad():
+        x_t_b, t_b, _ = model(x=x1, pred_type="get_train_sample", diff_ages=diff_ages)
+        v_pred_b = model.model(x_t_b, t=t_b, image=image,
+                               embeddings=embeddings, metadata=metadata)
+        x1_hat_b = x_t_b + (1.0 - t_b.view(-1, 1, 1, 1, 1)) * v_pred_b
+
+    return F.mse_loss(x1_hat_a, x1_hat_b)
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +263,7 @@ if __name__ == '__main__':
                         cons_loss = torch.tensor(0.0, device=DEVICE)
                         if args.lambda_cons > 0 and mode == 'train':
                             cons_loss = consistency_loss(
-                                model, inputs, context, metadata, diff_ages)
+                                model, inputs, context, metadata, diff_ages=diff_ages)
                             loss = loss + args.lambda_cons * cons_loss
 
                 if mode == 'train':
