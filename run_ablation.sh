@@ -6,6 +6,14 @@ cd /nfs/home/ttao/Projects/TADM-3D
 
 export USER=${USER:-ttao}
 
+# Environment setup
+rm -rf /home/runai-home/.local/lib/
+pip install -r requirements.txt -q
+pip install monai-generative --no-deps -q
+
+nvidia-smi
+python -c "import torch; print('torch:', torch.__version__)"
+
 DATASET=/nfs/home/ttao/Data/paired_oasis/pairwise_oasis/
 CACHE=/nfs/home/ttao/cache/
 CKPT_ROOT=/nfs/home/ttao/Projects/TADM-3D/checkpoints
