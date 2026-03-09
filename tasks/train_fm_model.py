@@ -119,7 +119,16 @@ if __name__ == '__main__':
     parser.add_argument('--lambda_cons', default=0.1,    type=float,
                         help='Weight for consistency regularization loss')
     parser.add_argument('--interpolant', default='stochastic', type=str,
-                        choices=['linear', 'cosine', 'stochastic', 'ot'])
+                        choices=['linear', 'cosine', 'stochastic'])
+    parser.add_argument('--sigma_min',         default=0.01,  type=float)
+    parser.add_argument('--no_time_annealing', action='store_true',
+                        help='Disable adaptive time sampler annealing (ablation)')
+    parser.add_argument('--no_ot_scaling',     action='store_true',
+                        help='Disable temporal-aware OT source scaling (ablation)')
+    parser.add_argument('--no_tpg',            action='store_true',
+                        help='Disable Temporal Progression Gate (ablation)')
+    parser.add_argument('--no_cross_attn',     action='store_true',
+                        help='Disable Cross-Attention Gate at bottleneck (ablation)')
     parser.add_argument('--solver',      default='heun', type=str,
                         choices=['euler', 'heun'])
     parser.add_argument('--n_steps',     default=20,     type=int,
@@ -207,6 +216,7 @@ if __name__ == '__main__':
     for epoch in range(args.n_epochs):
 
         # Anneal adaptive time sampler (Innovation 1) — skip if disabled
+        if not args.no_time_annealing:
         if not args.no_time_annealing:
             model.fm.time_sampler.anneal(epoch, args.n_epochs)
 

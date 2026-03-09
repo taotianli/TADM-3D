@@ -10,7 +10,7 @@ DATASET=/nfs/home/ttao/Data/paired_oasis/pairwise_oasis/
 CACHE=/nfs/home/ttao/cache/
 CKPT_ROOT=/nfs/home/ttao/Projects/TADM-3D/checkpoints
 BAE_CKPT=${CKPT_ROOT}/bae-best.pth
-COMMON="--dataset ${DATASET} --cache_dir ${CACHE} --bae_ckpt ${BAE_CKPT} --n_epochs 500 --batch_size 1 --lr 1e-4 --num_workers 4"
+COMMON="--dataset ${DATASET} --cache_dir ${CACHE} --bae_ckpt ${BAE_CKPT} --n_epochs 50 --batch_size 1 --lr 1e-4 --num_workers 4"
 
 run_a0() {
     echo "=== A0: Minimal CFM baseline (linear, no extras) ==="
