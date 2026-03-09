@@ -268,18 +268,29 @@ if __name__ == '__main__':
 
                 if mode == 'train':
                     scaler.scale(loss).backward()
+                    # unscale before clipping so the threshold is in real gradient space
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     scaler.step(optimizer)
                     scaler.update()
 
-                writer.add_scalar(f'{mode}/batch-loss',      loss.item(),     global_counter[mode])
-                writer.add_scalar(f'{mode}/batch-cfm-loss',  cfm_loss.item(), global_counter[mode])
+                # skip NaN batches silently (weights already protected by clipping,
+                # but NaN can still appear from extreme inputs)
+                loss_val     = loss.item()
+                cfm_loss_val = cfm_loss.item()
+                if not (loss_val == loss_val):   # NaN check
+                    global_counter[mode] += 1
+                    continue
+
+                writer.add_scalar(f'{mode}/batch-loss',      loss_val,        global_counter[mode])
+                writer.add_scalar(f'{mode}/batch-cfm-loss',  cfm_loss_val,    global_counter[mode])
                 if bae is not None:
                     writer.add_scalar(f'{mode}/batch-bae-loss',  bae_loss.item(),  global_counter[mode])
                 if args.lambda_cons > 0:
                     writer.add_scalar(f'{mode}/batch-cons-loss', cons_loss.item(), global_counter[mode])
 
-                epoch_loss      += loss.item()
-                epoch_cfm_loss  += cfm_loss.item()
+                epoch_loss      += loss_val
+                epoch_cfm_loss  += cfm_loss_val
                 epoch_bae_loss  += bae_loss.item()
                 epoch_cons_loss += cons_loss.item()
 
