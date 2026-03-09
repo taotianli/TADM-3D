@@ -120,15 +120,6 @@ if __name__ == '__main__':
                         help='Weight for consistency regularization loss')
     parser.add_argument('--interpolant', default='stochastic', type=str,
                         choices=['linear', 'cosine', 'stochastic'])
-    parser.add_argument('--sigma_min',         default=0.01,  type=float)
-    parser.add_argument('--no_time_annealing', action='store_true',
-                        help='Disable adaptive time sampler annealing (ablation)')
-    parser.add_argument('--no_ot_scaling',     action='store_true',
-                        help='Disable temporal-aware OT source scaling (ablation)')
-    parser.add_argument('--no_tpg',            action='store_true',
-                        help='Disable Temporal Progression Gate (ablation)')
-    parser.add_argument('--no_cross_attn',     action='store_true',
-                        help='Disable Cross-Attention Gate at bottleneck (ablation)')
     parser.add_argument('--solver',      default='heun', type=str,
                         choices=['euler', 'heun'])
     parser.add_argument('--n_steps',     default=20,     type=int,
