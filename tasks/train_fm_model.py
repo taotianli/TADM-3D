@@ -119,11 +119,22 @@ if __name__ == '__main__':
     parser.add_argument('--lambda_cons', default=0.1,    type=float,
                         help='Weight for consistency regularization loss')
     parser.add_argument('--interpolant', default='stochastic', type=str,
-                        choices=['linear', 'cosine', 'stochastic'])
+                        choices=['linear', 'cosine', 'stochastic', 'ot'])
     parser.add_argument('--solver',      default='heun', type=str,
                         choices=['euler', 'heun'])
     parser.add_argument('--n_steps',     default=20,     type=int,
                         help='ODE steps at inference')
+    parser.add_argument('--sigma_min',   default=0.01,   type=float,
+                        help='Sigma_min for stochastic interpolant')
+    # Ablation flags — disable individual innovations
+    parser.add_argument('--no_tpg',           action='store_true',
+                        help='Disable Temporal Progression Gate (Innovation 4)')
+    parser.add_argument('--no_cross_attn',    action='store_true',
+                        help='Disable Cross-Attention Gate at bottleneck (Innovation 3)')
+    parser.add_argument('--no_ot_scaling',    action='store_true',
+                        help='Disable temporal-aware OT path scaling (Innovation 2)')
+    parser.add_argument('--no_time_annealing', action='store_true',
+                        help='Disable adaptive time sampler annealing (Innovation 1)')
     args = parser.parse_args()
 
     if args.wandb:
@@ -163,8 +174,12 @@ if __name__ == '__main__':
 
     model = FlowMatching3D(
         interpolant_type=args.interpolant,
+        sigma_min=args.sigma_min,
         n_inference_steps=args.n_steps,
         solver=args.solver,
+        use_tpg=not args.no_tpg,
+        use_cross_attn=not args.no_cross_attn,
+        use_ot_scaling=not args.no_ot_scaling,
     ).to(DEVICE)
 
     if args.fm_ckpt is not None:
@@ -191,8 +206,9 @@ if __name__ == '__main__':
 
     for epoch in range(args.n_epochs):
 
-        # Anneal adaptive time sampler (Innovation 1)
-        model.fm.time_sampler.anneal(epoch, args.n_epochs)
+        # Anneal adaptive time sampler (Innovation 1) — skip if disabled
+        if not args.no_time_annealing:
+            model.fm.time_sampler.anneal(epoch, args.n_epochs)
 
         for mode in loaders:
             loader = loaders[mode]

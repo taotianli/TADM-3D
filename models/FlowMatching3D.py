@@ -38,9 +38,13 @@ class FlowMatching3D(nn.Module):
                  interpolant_type: str = "stochastic",
                  sigma_min: float = 0.01,
                  n_inference_steps: int = 20,
-                 solver: str = "heun"):
+                 solver: str = "heun",
+                 use_tpg: bool = True,
+                 use_cross_attn: bool = True,
+                 use_ot_scaling: bool = True):
         super().__init__()
         self.channels = channels
+        self.use_ot_scaling = use_ot_scaling
 
         # Context encoder (same as TADM-3D)
         self.embed_model = BasicUNetEncoder(3, channels, channels, feature)
@@ -49,6 +53,8 @@ class FlowMatching3D(nn.Module):
         self.model = VelocityUNet(
             3, channels + channels, channels, feature,
             act=("LeakyReLU", {"negative_slope": 0.1, "inplace": False}),
+            use_tpg=use_tpg,
+            use_cross_attn=use_cross_attn,
         )
 
         # Flow matching process
@@ -57,6 +63,7 @@ class FlowMatching3D(nn.Module):
             sigma_min=sigma_min,
             n_inference_steps=n_inference_steps,
             solver=solver,
+            use_ot_scaling=use_ot_scaling,
         )
 
     def forward(self, image=None, x=None, metadata=None,

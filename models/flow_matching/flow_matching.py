@@ -59,6 +59,61 @@ class CosineInterpolant:
         return dw0 * x0 + dw1 * x1
 
 
+class MinibatchOTInterpolant:
+    """
+    Minibatch Optimal Transport CFM (OT-CFM) from Tong et al. NeurIPS 2023.
+
+    Instead of pairing each x_0 with an independent x_1, we solve a
+    minibatch OT problem to find the assignment that minimises total
+    transport cost within the batch.  This reduces variance in the
+    CFM training objective and produces straighter flow trajectories.
+
+    For batch_size=1 (our 3D case) this degenerates to standard linear
+    CFM, so the benefit only appears when batch_size > 1.  We include it
+    here for the 2D ablation where larger batches are feasible.
+    """
+    def __init__(self, sigma_min: float = 0.0):
+        self.sigma_min = sigma_min
+
+    def _ot_permutation(self, x0: torch.Tensor, x1: torch.Tensor) -> torch.Tensor:
+        """
+        Greedy minibatch OT: find permutation of x0 that minimises
+        sum of squared L2 distances to x1.
+        Returns permuted x0.
+        """
+        B = x0.shape[0]
+        if B == 1:
+            return x0
+        # Cost matrix: (B, B) pairwise squared L2
+        x0_flat = x0.view(B, -1)
+        x1_flat = x1.view(B, -1)
+        cost = torch.cdist(x0_flat, x1_flat, p=2) ** 2  # (B, B)
+        # Greedy assignment (Hungarian is O(B^3), greedy is O(B^2))
+        used = torch.zeros(B, dtype=torch.bool, device=x0.device)
+        perm = torch.zeros(B, dtype=torch.long, device=x0.device)
+        for i in range(B):
+            row = cost[i].clone()
+            row[used] = float('inf')
+            j = row.argmin()
+            perm[i] = j
+            used[j] = True
+        return x0[perm]
+
+    def interpolate(self, x0: torch.Tensor, x1: torch.Tensor,
+                    t: torch.Tensor) -> torch.Tensor:
+        x0 = self._ot_permutation(x0, x1)
+        t_ = t.view(-1, *([1] * (x0.ndim - 1)))
+        mu_t = (1.0 - t_) * x0 + t_ * x1
+        if self.sigma_min > 0:
+            return mu_t + self.sigma_min * torch.randn_like(x0)
+        return mu_t
+
+    def target_velocity(self, x0: torch.Tensor, x1: torch.Tensor,
+                        t: torch.Tensor) -> torch.Tensor:
+        x0 = self._ot_permutation(x0, x1)
+        return x1 - x0
+
+
 class StochasticInterpolant:
     """
     Stochastic interpolant with learnable sigma_min (SigmaFM):
@@ -222,13 +277,17 @@ class ConditionalFlowMatching(nn.Module):
                  interpolant_type: str = "stochastic",
                  sigma_min: float = 0.01,
                  n_inference_steps: int = 20,
-                 solver: str = "heun"):
+                 solver: str = "heun",
+                 use_ot_scaling: bool = True):
         super().__init__()
+        self.use_ot_scaling = use_ot_scaling
 
         if interpolant_type == "linear":
             self.interpolant = LinearInterpolant()
         elif interpolant_type == "cosine":
             self.interpolant = CosineInterpolant()
+        elif interpolant_type == "ot":
+            self.interpolant = MinibatchOTInterpolant(sigma_min=sigma_min)
         else:  # stochastic (default)
             self.interpolant = StochasticInterpolant(sigma_min=sigma_min)
 
@@ -254,7 +313,7 @@ class ConditionalFlowMatching(nn.Module):
 
         # Sample source: Gaussian noise, optionally scaled by age-gap
         x0 = torch.randn_like(x1)
-        if diff_ages is not None:
+        if self.use_ot_scaling and diff_ages is not None:
             # Normalise diff_ages (years) to [0.5, 1.5] scale factor
             scale = 1.0 + 0.5 * (diff_ages.float().to(device) / 10.0).clamp(0, 1)
             scale = scale.view(-1, *([1] * (x1.ndim - 1)))
@@ -263,7 +322,7 @@ class ConditionalFlowMatching(nn.Module):
         # Sample time
         t = self.time_sampler.sample(B, device, diff_ages)
 
-        # Interpolate
+        # Interpolate — share the same noise sample so x_t and v_t are consistent
         if isinstance(self.interpolant, StochasticInterpolant):
             noise = torch.randn_like(x1)
             x_t = self.interpolant.interpolate(x0, x1, t, noise)

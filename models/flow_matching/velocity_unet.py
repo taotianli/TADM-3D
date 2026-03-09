@@ -227,6 +227,8 @@ class VelocityUNet(nn.Module):
         dropout: Union[float, tuple] = 0.0,
         upsample: str = "deconv",
         dimensions: Optional[int] = None,
+        use_tpg: bool = True,
+        use_cross_attn: bool = True,
     ):
         super().__init__()
         if dimensions is not None:
@@ -234,6 +236,8 @@ class VelocityUNet(nn.Module):
 
         fea = ensure_tuple_rep(features, 6)
         TEMB = 2048  # total conditioning dim
+        self.use_tpg = use_tpg
+        self.use_cross_attn = use_cross_attn
 
         # ---- Conditioning embeddings ----
         def make_emb():
@@ -258,24 +262,24 @@ class VelocityUNet(nn.Module):
         self.dsa4   = SqueezeAttentionBlock(fea[4], fea[4])
 
         # ---- Bottleneck cross-attention (Innovation 3) ----
-        self.cross_attn = CrossAttentionGate(fea[4], num_heads=4)
+        self.cross_attn = CrossAttentionGate(fea[4], num_heads=4) if use_cross_attn else None
 
         # ---- Decoder ----
         self.upcat_4 = UpCatVel(spatial_dims, fea[4], fea[3], fea[3], act, norm, bias, dropout, upsample, temb_dim=TEMB)
-        self.tpg4    = TemporalProgressionGate(fea[3])
+        self.tpg4    = TemporalProgressionGate(fea[3]) if use_tpg else None
         self.usa4    = SqueezeAttentionBlock(fea[3], fea[3])
 
         self.upcat_3 = UpCatVel(spatial_dims, fea[3], fea[2], fea[2], act, norm, bias, dropout, upsample, temb_dim=TEMB)
-        self.tpg3    = TemporalProgressionGate(fea[2])
+        self.tpg3    = TemporalProgressionGate(fea[2]) if use_tpg else None
         self.usa3    = SqueezeAttentionBlock(fea[2], fea[2])
 
         self.upcat_2 = UpCatVel(spatial_dims, fea[2], fea[1], fea[1], act, norm, bias, dropout, upsample, temb_dim=TEMB)
-        self.tpg2    = TemporalProgressionGate(fea[1])
+        self.tpg2    = TemporalProgressionGate(fea[1]) if use_tpg else None
         self.usa2    = SqueezeAttentionBlock(fea[1], fea[1])
 
         self.upcat_1 = UpCatVel(spatial_dims, fea[1], fea[0], fea[5], act, norm, bias, dropout, upsample,
                                 halves=False, temb_dim=TEMB)
-        self.tpg1    = TemporalProgressionGate(fea[0])
+        self.tpg1    = TemporalProgressionGate(fea[0]) if use_tpg else None
         self.usa1    = SqueezeAttentionBlock(fea[0], fea[0])
 
         self.final_conv = Conv["conv", spatial_dims](fea[5], out_channels, kernel_size=1)
@@ -334,24 +338,28 @@ class VelocityUNet(nn.Module):
         x4 = self.dsa4(x4)
 
         # Bottleneck cross-attention (Innovation 3)
-        if embeddings is not None:
+        if self.use_cross_attn and self.cross_attn is not None and embeddings is not None:
             x4 = self.cross_attn(x4, embeddings[4])
 
-        # Decoder with TPG (Innovation 4)
+        # Decoder with optional TPG (Innovation 4)
         u4 = self.upcat_4(x4, x3, cond)
-        u4 = self.tpg4(u4, daemb)
+        if self.use_tpg and self.tpg4 is not None:
+            u4 = self.tpg4(u4, daemb)
         u4 = self.usa4(u4)
 
         u3 = self.upcat_3(u4, x2, cond)
-        u3 = self.tpg3(u3, daemb)
+        if self.use_tpg and self.tpg3 is not None:
+            u3 = self.tpg3(u3, daemb)
         u3 = self.usa3(u3)
 
         u2 = self.upcat_2(u3, x1, cond)
-        u2 = self.tpg2(u2, daemb)
+        if self.use_tpg and self.tpg2 is not None:
+            u2 = self.tpg2(u2, daemb)
         u2 = self.usa2(u2)
 
         u1 = self.upcat_1(u2, x0, cond)
-        u1 = self.tpg1(u1, daemb)
+        if self.use_tpg and self.tpg1 is not None:
+            u1 = self.tpg1(u1, daemb)
         u1 = self.usa1(u1)
 
         return self.final_conv(u1)
