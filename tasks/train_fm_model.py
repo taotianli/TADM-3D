@@ -217,7 +217,6 @@ if __name__ == '__main__':
 
         # Anneal adaptive time sampler (Innovation 1) — skip if disabled
         if not args.no_time_annealing:
-        if not args.no_time_annealing:
             model.fm.time_sampler.anneal(epoch, args.n_epochs)
 
         for mode in loaders:
