@@ -181,7 +181,8 @@ if __name__ == '__main__':
                                 predicted_diff_age = bae(pred_lr, context, bae_age, batch['patient_condition'].to(DEVICE))
 
                             gt_diff_age = batch['diff_ages'].to(DEVICE).unsqueeze(1).float()
-                            bae_loss = F.mse_loss(predicted_diff_age.float(), gt_diff_age)
+                            # Paper Eq.7 uses L1 absolute error for BAE loss
+                            bae_loss = F.l1_loss(predicted_diff_age.float(), gt_diff_age)
                             loss = mse_diff_loss + bae_loss
                         else:
                             bae_loss = torch.tensor(0.0)
