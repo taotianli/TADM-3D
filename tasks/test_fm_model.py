@@ -75,7 +75,7 @@ if __name__ == '__main__':
         transforms.SpacingD(pixdim=1.5, keys=['img_lr', 'img_hr']),
         transforms.ResizeWithPadOrCropD(spatial_size=(128, 128, 128),
                                         mode='minimum', keys=['img_lr', 'img_hr'], lazy=True),
-        transforms.ScaleIntensityD(minv=0, maxv=1, keys=['img_hr', 'img_lr']),
+        transforms.NormalizeIntensityD(keys=['img_hr', 'img_lr'], nonzero=True, channel_wise=True),
     ])
 
     test_df  = pd.read_csv(args.dataset + "test_dataset_updated.csv").to_dict(orient='records')

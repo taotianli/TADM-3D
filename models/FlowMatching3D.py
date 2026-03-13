@@ -53,6 +53,7 @@ class FlowMatching3D(nn.Module):
         self.model = VelocityUNet(
             3, channels + channels, channels, feature,
             act=("LeakyReLU", {"negative_slope": 0.1, "inplace": False}),
+            dropout=0.1,
             use_tpg=use_tpg,
             use_cross_attn=use_cross_attn,
         )

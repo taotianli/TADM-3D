@@ -116,7 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr',          default=1e-4,   type=float)
     parser.add_argument('--wandb',       action='store_true')
     parser.add_argument('--run_name',    required=True,  type=str)
-    parser.add_argument('--lambda_cons', default=0.1,    type=float,
+    parser.add_argument('--lambda_cons', default=0.3,    type=float,
                         help='Weight for consistency regularization loss')
     parser.add_argument('--interpolant', default='stochastic', type=str,
                         choices=['linear', 'cosine', 'stochastic'])
@@ -140,7 +140,22 @@ if __name__ == '__main__':
     if args.wandb:
         wandb.init(project="TAFM-3D", name=args.run_name)
 
-    transforms_fn = transforms.Compose([
+    train_transforms_fn = transforms.Compose([
+        transforms.LoadImageD(keys=['img_hr', 'img_lr'], reader="NibabelReader"),
+        transforms.EnsureChannelFirstD(keys=['img_lr', 'img_hr']),
+        transforms.SpacingD(pixdim=1.5, keys=['img_lr', 'img_hr']),
+        transforms.ResizeWithPadOrCropD(spatial_size=(128, 128, 128),
+                                        mode='minimum', keys=['img_lr', 'img_hr'], lazy=True),
+        transforms.NormalizeIntensityD(keys=['img_hr', 'img_lr'], nonzero=True, channel_wise=True),
+        # Data augmentation to reduce overfitting
+        transforms.RandFlipD(keys=['img_hr', 'img_lr'], prob=0.5, spatial_axis=0),
+        transforms.RandFlipD(keys=['img_hr', 'img_lr'], prob=0.5, spatial_axis=1),
+        transforms.RandFlipD(keys=['img_hr', 'img_lr'], prob=0.5, spatial_axis=2),
+        transforms.RandScaleIntensityD(keys=['img_hr', 'img_lr'], factors=0.1, prob=0.5),
+        transforms.RandShiftIntensityD(keys=['img_hr', 'img_lr'], offsets=0.1, prob=0.5),
+    ])
+
+    valid_transforms_fn = transforms.Compose([
         transforms.LoadImageD(keys=['img_hr', 'img_lr'], reader="NibabelReader"),
         transforms.EnsureChannelFirstD(keys=['img_lr', 'img_hr']),
         transforms.SpacingD(pixdim=1.5, keys=['img_lr', 'img_hr']),
@@ -160,8 +175,8 @@ if __name__ == '__main__':
 
     train_df = load_df(args.dataset + "train_dataset.csv", args.dataset)
     valid_df = load_df(args.dataset + "valid_dataset.csv", args.dataset)
-    trainset = monai.data.Dataset(train_df, transforms_fn)
-    validset = monai.data.Dataset(valid_df, transforms_fn)
+    trainset = monai.data.Dataset(train_df, train_transforms_fn)
+    validset = monai.data.Dataset(valid_df, valid_transforms_fn)
 
     train_loader = DataLoader(trainset, num_workers=args.num_workers,
                               batch_size=args.batch_size, shuffle=True,
@@ -196,7 +211,9 @@ if __name__ == '__main__':
         print(f"Loaded and froze BAE from {args.bae_ckpt}")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-3)
-    scheduler = LinearWarmupCosineAnnealingLR(optimizer, warmup_epochs=50, max_epochs=500)
+    # Fix scheduler: adapt warmup to actual n_epochs, use args.n_epochs for max_epochs
+    warmup_epochs = min(50, args.n_epochs // 5) if args.n_epochs >= 10 else 0
+    scheduler = LinearWarmupCosineAnnealingLR(optimizer, warmup_epochs=warmup_epochs, max_epochs=args.n_epochs)
     scaler    = GradScaler('cuda')
     writer    = SummaryWriter()
 
