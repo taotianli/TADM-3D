@@ -68,7 +68,7 @@ def images_sampling(image, metadata, model, diff_ages=None):
 # Innovation 5 — Consistency Regularization Loss
 # ---------------------------------------------------------------------------
 
-def consistency_loss(model, x1, image, metadata, diff_ages):
+def consistency_loss(model, x1, image, metadata, diff_ages, embeddings, dino_features=None):
     """
     Consistency Regularization: two independently sampled (x_t, t) pairs
     from the same x_1 should produce velocity predictions consistent with
@@ -78,22 +78,21 @@ def consistency_loss(model, x1, image, metadata, diff_ages):
         x1_hat_b = x_t_b + (1 - t_b) * v_theta(x_t_b, t_b)   [no grad, target]
         L_cons = MSE(x1_hat_a, x1_hat_b.detach())
 
-    The second pair runs under torch.no_grad() since it is used only as a
-    detached target, halving the extra memory overhead vs. a naive two-pass.
+    Reuses pre-computed embeddings and dino_features to avoid redundant forward passes.
     """
-    embeddings = model.embed_model(image)
-
     # first pass — gradients flow through this one
     x_t_a, t_a, _ = model(x=x1, pred_type="get_train_sample", diff_ages=diff_ages)
     v_pred_a = model.model(x_t_a, t=t_a, image=image,
-                           embeddings=embeddings, metadata=metadata)
+                           embeddings=embeddings, metadata=metadata,
+                           dino_features=dino_features)
     x1_hat_a = x_t_a + (1.0 - t_a.view(-1, 1, 1, 1, 1)) * v_pred_a
 
     # second pass — detached target, no gradient needed
     with torch.no_grad():
         x_t_b, t_b, _ = model(x=x1, pred_type="get_train_sample", diff_ages=diff_ages)
         v_pred_b = model.model(x_t_b, t=t_b, image=image,
-                               embeddings=embeddings, metadata=metadata)
+                               embeddings=embeddings, metadata=metadata,
+                               dino_features=dino_features)
         x1_hat_b = x_t_b + (1.0 - t_b.view(-1, 1, 1, 1, 1)) * v_pred_b
 
     return F.mse_loss(x1_hat_a, x1_hat_b)
@@ -135,6 +134,8 @@ if __name__ == '__main__':
                         help='Disable temporal-aware OT path scaling (Innovation 2)')
     parser.add_argument('--no_time_annealing', action='store_true',
                         help='Disable adaptive time sampler annealing (Innovation 1)')
+    parser.add_argument('--use_dino', action='store_true',
+                        help='Enable frozen DINOv2-small perceptual guidance at bottleneck')
     args = parser.parse_args()
 
     if args.wandb:
@@ -195,6 +196,7 @@ if __name__ == '__main__':
         use_tpg=not args.no_tpg,
         use_cross_attn=not args.no_cross_attn,
         use_ot_scaling=not args.no_ot_scaling,
+        use_dino=args.use_dino,
     ).to(DEVICE)
 
     if args.fm_ckpt is not None:
@@ -266,9 +268,17 @@ if __name__ == '__main__':
                             x=inputs, pred_type="get_train_sample",
                             diff_ages=diff_ages)
 
-                        v_pred = model(
-                            x=x_t, step=t, image=context,
-                            metadata=metadata, pred_type="predict_velocity")
+                        # Pre-compute context embeddings once — reused by main loss
+                        # and consistency loss to avoid redundant forward passes
+                        embeddings = model.embed_model(context)
+                        dino_features = None
+                        if args.use_dino and model.model.dino_extractor is not None:
+                            dino_features = model.model.dino_extractor(context)
+
+                        v_pred = model.model(
+                            x_t, t=t, image=context,
+                            embeddings=embeddings, metadata=metadata,
+                            dino_features=dino_features)
 
                         cfm_loss = F.mse_loss(v_pred.float(), v_target.float())
                         loss = cfm_loss
@@ -297,7 +307,10 @@ if __name__ == '__main__':
                         cons_loss = torch.tensor(0.0, device=DEVICE)
                         if args.lambda_cons > 0 and mode == 'train':
                             cons_loss = consistency_loss(
-                                model, inputs, context, metadata, diff_ages=diff_ages)
+                                model, inputs, context, metadata,
+                                diff_ages=diff_ages,
+                                embeddings=embeddings,
+                                dino_features=dino_features)
                             loss = loss + args.lambda_cons * cons_loss
 
                 if mode == 'train':

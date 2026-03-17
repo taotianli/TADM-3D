@@ -145,6 +145,19 @@ run_a8() {
         --lambda_cons 0.1
 }
 
+run_a9() {
+    echo "=== A9: Full model + DINOv2 perceptual guidance ==="
+    python tasks/train_fm_model.py ${COMMON} \
+        --output_dir ${CKPT_ROOT}/ablation_a9 \
+        --run_name ablation_a9_dino \
+        --interpolant stochastic \
+        --sigma_min 0.01 \
+        --solver heun \
+        --n_steps 20 \
+        --lambda_cons 0.1 \
+        --use_dino
+}
+
 case "${1:-all}" in
     a0) run_a0 ;;
     a1) run_a1 ;;
@@ -155,6 +168,7 @@ case "${1:-all}" in
     a6) run_a6 ;;
     a7) run_a7 ;;
     a8) run_a8 ;;
+    a9) run_a9 ;;
     all)
         run_a0
         run_a1
@@ -165,6 +179,7 @@ case "${1:-all}" in
         run_a6
         run_a7
         run_a8
+        run_a9
         ;;
     *)
         echo "Usage: $0 [a0|a1|a2|a3|a4|a5|a6|a7|a8|all]"

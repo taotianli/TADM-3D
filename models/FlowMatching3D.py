@@ -41,10 +41,12 @@ class FlowMatching3D(nn.Module):
                  solver: str = "heun",
                  use_tpg: bool = True,
                  use_cross_attn: bool = True,
-                 use_ot_scaling: bool = True):
+                 use_ot_scaling: bool = True,
+                 use_dino: bool = False):
         super().__init__()
         self.channels = channels
         self.use_ot_scaling = use_ot_scaling
+        self.use_dino = use_dino
 
         # Context encoder (same as TADM-3D)
         self.embed_model = BasicUNetEncoder(3, channels, channels, feature)
@@ -56,6 +58,7 @@ class FlowMatching3D(nn.Module):
             dropout=0.1,
             use_tpg=use_tpg,
             use_cross_attn=use_cross_attn,
+            use_dino=use_dino,
         )
 
         # Flow matching process
@@ -86,16 +89,26 @@ class FlowMatching3D(nn.Module):
         elif pred_type == "predict_velocity":
             # Predict velocity field given x_t and t
             embeddings = self.embed_model(image)
+            # Extract DINOv2 features if enabled
+            dino_features = None
+            if self.use_dino and hasattr(self.model, 'dino_extractor') and self.model.dino_extractor is not None:
+                dino_features = self.model.dino_extractor(image)
             return self.model(x, t=step, image=image,
-                              embeddings=embeddings, metadata=metadata)
+                              embeddings=embeddings, metadata=metadata,
+                              dino_features=dino_features)
 
         elif pred_type == "fm_sample":
             # Full ODE integration: noise → residual
             embeddings = self.embed_model(image)
+            # Pre-compute DINOv2 features once (not per ODE step)
+            dino_features = None
+            if self.use_dino and hasattr(self.model, 'dino_extractor') and self.model.dino_extractor is not None:
+                dino_features = self.model.dino_extractor(image)
 
             def velocity_fn(x_t, t_tensor):
                 return self.model(x_t, t=t_tensor, image=image,
-                                  embeddings=embeddings, metadata=metadata)
+                                  embeddings=embeddings, metadata=metadata,
+                                  dino_features=dino_features)
 
             shape = (image.shape[0], self.channels, *image.shape[2:])
             return self.fm.sample(velocity_fn, shape, image.device,

@@ -7,6 +7,8 @@ instead of denoised images.  Key changes:
   - Time embedding represents continuous t in [0,1] rather than discrete step
   - Added cross-attention gating at bottleneck (Innovation 3)
   - Added Temporal Progression Gate (Innovation 4)
+  - Gated context injection (replaces plain addition)
+  - Optional DINOv2 perceptual guidance at bottleneck
 """
 
 from typing import Optional, Sequence, Union
@@ -199,6 +201,98 @@ class TemporalProgressionGate(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Gated Context Injection (replaces plain addition)
+# ---------------------------------------------------------------------------
+
+class GatedContextInjection(nn.Module):
+    """
+    Learned gating for context encoder features.
+
+    Instead of plain addition (x = x + ctx), we use:
+        g = sigmoid(W_x * x + W_ctx * ctx + b)
+        out = x + g * ctx
+
+    This prevents gradient interference when x and ctx have different scales.
+    """
+    def __init__(self, channels: int):
+        super().__init__()
+        self.gate = nn.Sequential(
+            nn.Conv3d(channels * 2, channels, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
+        g = self.gate(torch.cat([x, ctx], dim=1))
+        return x + g * ctx
+
+
+# ---------------------------------------------------------------------------
+# DINOv2 Feature Extractor (frozen)
+# ---------------------------------------------------------------------------
+
+class DINOv2FeatureExtractor(nn.Module):
+    """
+    Frozen DINOv2-small encoder for extracting rich semantic features from
+    2D axial slices of the baseline MRI.
+
+    DINOv2 provides strong structural/anatomical priors that the BasicUNetEncoder
+    lacks, especially for fine-grained brain structures.
+
+    We extract features from the middle axial slice (z=D//2) and project them
+    into the velocity UNet bottleneck via cross-attention.
+    """
+    def __init__(self, output_dim: int = 512):
+        super().__init__()
+        try:
+            # Try to load DINOv2-small from torch.hub
+            self.dino = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14', pretrained=True)
+            self.dino.eval()
+            for p in self.dino.parameters():
+                p.requires_grad = False
+
+            # DINOv2-small outputs 384-dim features
+            self.proj = nn.Sequential(
+                nn.Linear(384, output_dim),
+                nn.LayerNorm(output_dim),
+            )
+            self.enabled = True
+        except Exception as e:
+            print(f"Warning: Could not load DINOv2 ({e}). DINOv2 guidance disabled.")
+            self.enabled = False
+
+    @torch.no_grad()
+    def forward(self, image: torch.Tensor) -> Optional[torch.Tensor]:
+        """
+        Args:
+            image: (B, 1, D, H, W) — baseline MRI
+
+        Returns:
+            (B, N, output_dim) — DINOv2 features from middle slice, or None if disabled
+        """
+        if not self.enabled:
+            return None
+
+        B, C, D, H, W = image.shape
+        # Extract middle axial slice
+        mid_slice = image[:, 0, D // 2, :, :]  # (B, H, W)
+
+        # Normalize to [0, 1] and replicate to 3 channels for DINOv2
+        mid_slice = (mid_slice - mid_slice.min()) / (mid_slice.max() - mid_slice.min() + 1e-8)
+        mid_slice = mid_slice.unsqueeze(1).repeat(1, 3, 1, 1)  # (B, 3, H, W)
+
+        # Resize to 224x224 (DINOv2 input size)
+        mid_slice = F.interpolate(mid_slice, size=(224, 224), mode='bilinear', align_corners=False)
+
+        # Extract features (no grad)
+        with torch.no_grad():
+            features = self.dino.forward_features(mid_slice)['x_norm_patchtokens']  # (B, N, 384)
+
+        # Project to output_dim
+        features = self.proj(features)  # (B, N, output_dim)
+        return features
+
+
+# ---------------------------------------------------------------------------
 # Velocity UNet
 # ---------------------------------------------------------------------------
 
@@ -209,8 +303,12 @@ class VelocityUNet(nn.Module):
     Differences from BasicUNetDe:
       - Predicts velocity (not denoised image)
       - Continuous time t in [0,1] (not discrete step)
-      - CrossAttentionGate at bottleneck (Innovation 3)
+      - CrossAttentionGate at bottleneck (Innovation 3) — attends to a
+        *separate* deep context feature (embeddings[5]) so it is not
+        redundant with the gated injection already applied to x4
       - TemporalProgressionGate at each decoder level (Innovation 4)
+      - GatedContextInjection replaces plain addition for skip connections
+      - Optional DINOv2 perceptual guidance at bottleneck
     """
 
     @deprecated_arg(name="dimensions", new_name="spatial_dims", since="0.6",
@@ -229,6 +327,7 @@ class VelocityUNet(nn.Module):
         dimensions: Optional[int] = None,
         use_tpg: bool = True,
         use_cross_attn: bool = True,
+        use_dino: bool = False,
     ):
         super().__init__()
         if dimensions is not None:
@@ -238,6 +337,7 @@ class VelocityUNet(nn.Module):
         TEMB = 2048  # total conditioning dim
         self.use_tpg = use_tpg
         self.use_cross_attn = use_cross_attn
+        self.use_dino = use_dino
 
         # ---- Conditioning embeddings ----
         def make_emb():
@@ -261,8 +361,33 @@ class VelocityUNet(nn.Module):
         self.down_4 = DownVel(spatial_dims, fea[3], fea[4], act, norm, bias, dropout, TEMB)
         self.dsa4   = SqueezeAttentionBlock(fea[4], fea[4])
 
+        # ---- Gated context injection (replaces plain addition) ----
+        self.ctx_gate0 = GatedContextInjection(fea[0])
+        self.ctx_gate1 = GatedContextInjection(fea[1])
+        self.ctx_gate2 = GatedContextInjection(fea[2])
+        self.ctx_gate3 = GatedContextInjection(fea[3])
+        self.ctx_gate4 = GatedContextInjection(fea[4])
+
         # ---- Bottleneck cross-attention (Innovation 3) ----
-        self.cross_attn = CrossAttentionGate(fea[4], num_heads=4) if use_cross_attn else None
+        # Attends to embeddings[5] (the deepest context level, 4^3 spatial),
+        # which is distinct from embeddings[4] already injected via ctx_gate4.
+        # We project fea[5] → fea[4] so dimensions match.
+        if use_cross_attn:
+            self.ctx5_proj = nn.Conv3d(fea[5], fea[4], kernel_size=1)
+            self.cross_attn = CrossAttentionGate(fea[4], num_heads=4)
+        else:
+            self.ctx5_proj = None
+            self.cross_attn = None
+
+        # ---- Optional DINOv2 perceptual guidance ----
+        if use_dino:
+            self.dino_extractor = DINOv2FeatureExtractor(output_dim=fea[4])
+            # Cross-attention: bottleneck features attend to DINOv2 tokens
+            self.dino_cross_attn = nn.MultiheadAttention(fea[4], num_heads=4, batch_first=True)
+            self.dino_norm = nn.GroupNorm(8, fea[4])
+            self.dino_proj_out = nn.Conv3d(fea[4], fea[4], 1)
+        else:
+            self.dino_extractor = None
 
         # ---- Decoder ----
         self.upcat_4 = UpCatVel(spatial_dims, fea[4], fea[3], fea[3], act, norm, bias, dropout, upsample, temb_dim=TEMB)
@@ -292,14 +417,16 @@ class VelocityUNet(nn.Module):
         return e
 
     def forward(self, x: torch.Tensor, t: torch.Tensor,
-                embeddings=None, image=None, metadata=None) -> torch.Tensor:
+                embeddings=None, image=None, metadata=None,
+                dino_features=None) -> torch.Tensor:
         """
         Args:
-            x:          (B, C, D, H, W) — interpolated x_t
-            t:          (B,)            — continuous time in [0, 1]
-            embeddings: list of context encoder features
-            image:      (B, C, D, H, W) — baseline MRI context
-            metadata:   (B, 3)          — [age, diff_age, condition]
+            x:             (B, C, D, H, W) — interpolated x_t
+            t:             (B,)            — continuous time in [0, 1]
+            embeddings:    list of context encoder features [x0..x5]
+            image:         (B, C, D, H, W) — baseline MRI context
+            metadata:      (B, 3)          — [age, diff_age, condition]
+            dino_features: (B, N, C) pre-computed DINOv2 tokens, or None
         """
         # Build conditioning vector
         temb  = self._embed(self.temb,  t)
@@ -312,34 +439,53 @@ class VelocityUNet(nn.Module):
         if image is not None:
             x = torch.cat([image, x], dim=1)
 
-        # Encoder
+        # Encoder with gated context injection
         x0 = self.conv_0(x, cond)
         if embeddings is not None:
-            x0 = x0 + embeddings[0]
+            x0 = self.ctx_gate0(x0, embeddings[0])
 
         x1 = self.down_1(x0, cond)
         if embeddings is not None:
-            x1 = x1 + embeddings[1]
+            x1 = self.ctx_gate1(x1, embeddings[1])
         x1 = self.dsa1(x1)
 
         x2 = self.down_2(x1, cond)
         if embeddings is not None:
-            x2 = x2 + embeddings[2]
+            x2 = self.ctx_gate2(x2, embeddings[2])
         x2 = self.dsa2(x2)
 
         x3 = self.down_3(x2, cond)
         if embeddings is not None:
-            x3 = x3 + embeddings[3]
+            x3 = self.ctx_gate3(x3, embeddings[3])
         x3 = self.dsa3(x3)
 
         x4 = self.down_4(x3, cond)
         if embeddings is not None:
-            x4 = x4 + embeddings[4]
+            x4 = self.ctx_gate4(x4, embeddings[4])
         x4 = self.dsa4(x4)
 
         # Bottleneck cross-attention (Innovation 3)
+        # Uses embeddings[5] — the deepest context level (4^3 spatial),
+        # distinct from embeddings[4] already fused above.
         if self.use_cross_attn and self.cross_attn is not None and embeddings is not None:
-            x4 = self.cross_attn(x4, embeddings[4])
+            ctx5 = self.ctx5_proj(embeddings[5])
+            # Upsample ctx5 to match x4 spatial size if needed
+            if ctx5.shape[2:] != x4.shape[2:]:
+                ctx5 = F.interpolate(ctx5, size=x4.shape[2:], mode='trilinear', align_corners=False)
+            x4 = self.cross_attn(x4, ctx5)
+
+        # DINOv2 perceptual guidance at bottleneck
+        if self.use_dino and self.dino_extractor is not None:
+            if dino_features is None and image is not None:
+                # image is the original baseline MRI (before cat with x)
+                dino_features = self.dino_extractor(image)
+            if dino_features is not None:
+                B, C4, D4, H4, W4 = x4.shape
+                q = self.dino_norm(x4).view(B, C4, -1).permute(0, 2, 1)  # (B, N, C)
+                kv = dino_features.to(x4.dtype)
+                attn_out, _ = self.dino_cross_attn(q, kv, kv)
+                attn_out = attn_out.permute(0, 2, 1).view(B, C4, D4, H4, W4)
+                x4 = x4 + self.dino_proj_out(attn_out)
 
         # Decoder with optional TPG (Innovation 4)
         u4 = self.upcat_4(x4, x3, cond)
